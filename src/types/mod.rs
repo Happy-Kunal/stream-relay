@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -11,17 +13,19 @@ pub struct Message {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Topic {
     name: String,
+    path: Box<Path>,
+    metadata_path: Box<Path>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TopicWithOffset {
-    name: String,
+    topic: Topic,
     offset: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TopicMetaData {
-    name: String,
+    topic: Topic,
     last_flushed_offset: usize,
     num_of_segments: usize,
 }
@@ -49,32 +53,59 @@ impl Message {
 }
 
 impl Topic {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
+    pub fn new<T: AsRef<Path>>(name: String, root_path: T) -> Self {
+        let path = root_path.as_ref().join(&name).into_boxed_path();
+        let metadata_path = path.join("metadata.toml").into_boxed_path();
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl TopicWithOffset {
-    pub fn new(name: String, offset: usize) -> Self {
-        Self { name, offset }
-    }
-}
-
-impl TopicMetaData {
-    pub fn new(name: String, last_flushed_offset: usize, num_of_segments: usize) -> Self {
         Self {
             name,
-            last_flushed_offset,
-            num_of_segments,
+            path,
+            metadata_path,
         }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+
+    pub fn metadata_path(&self) -> &Path {
+        self.metadata_path.as_ref()
+    }
+}
+
+impl TopicWithOffset {
+    pub fn new(topic: Topic, offset: usize) -> Self {
+        Self { topic, offset }
+    }
+
+    pub fn offset(&self) -> &usize {
+        &self.offset
+    }
+}
+
+impl TopicMetaData {
+    pub fn new(topic: Topic, last_flushed_offset: usize, num_of_segments: usize) -> Self {
+        Self {
+            topic,
+            last_flushed_offset,
+            num_of_segments,
+        }
+    }
+
+    pub fn new_with_few_defaults(topic: Topic) -> Self {
+        Self {
+            topic,
+            last_flushed_offset: 0,
+            num_of_segments: 64,
+        }
+    }
+
+    pub fn topic(&self) -> &Topic {
+        &self.topic
     }
 
     pub fn last_flushed_offset(&self) -> &usize {
@@ -86,8 +117,20 @@ impl TopicMetaData {
     }
 }
 
-impl From<Topic> for TopicMetaData {
-    fn from(value: Topic) -> Self {
-        Self::new(value.name, 0, 64)
+impl TryFrom<Topic> for TopicMetaData {
+    type Error = Box<dyn std::error::Error>;
+
+    /// [BLOCKING I/O Used] tries to read metadata about topic from disk
+    /// and deserialize it into `Self`
+    /// 
+    /// # Error:
+    /// if topic doesn't exist on disk OR invalid data in topic's metadata
+    /// file to be deserialized.
+
+    fn try_from(value: Topic) -> Result<Self, Self::Error> {
+        let metadata = std::fs::read_to_string(value.metadata_path())?;
+        let metadata: TopicMetaData = toml::from_str(&metadata)?;
+
+        Ok(metadata)
     }
 }
