@@ -3,52 +3,51 @@ use std::path::Path;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     value: Bytes,
-    offset: usize,
-    topic_name: String,
+    offset: Option<usize>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Topic {
     name: String,
     path: Box<Path>,
     metadata_path: Box<Path>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TopicWithOffset {
     topic: Topic,
     offset: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TopicMetaData {
     topic: Topic,
-    last_flushed_offset: usize,
+    num_of_msg_per_file: usize,
+    last_flushed_offset: Option<usize>,
     num_of_segments: usize,
 }
 
 impl Message {
-    pub fn new(value: Bytes, offset: usize, topic_name: String) -> Self {
-        Self {
-            value,
-            offset,
-            topic_name,
-        }
+    pub fn new(value: Bytes, offset: Option<usize>) -> Self {
+        Self { value, offset }
     }
 
     pub fn value(&self) -> &Bytes {
         &self.value
     }
 
-    pub fn offset(&self) -> &usize {
-        &self.offset
+    pub fn offset(&self) -> Option<&usize> {
+        match self.offset {
+            Some(ref offset) => Some(offset),
+            None => None,
+        }
     }
 
-    pub fn topic_name(&self) -> &str {
-        &self.topic_name
+    pub fn set_offset(&mut self, offset: usize) {
+        self.offset = Some(offset);
     }
 }
 
@@ -88,9 +87,15 @@ impl TopicWithOffset {
 }
 
 impl TopicMetaData {
-    pub fn new(topic: Topic, last_flushed_offset: usize, num_of_segments: usize) -> Self {
+    pub fn new(
+        topic: Topic,
+        num_of_msg_per_file: usize,
+        last_flushed_offset: Option<usize>,
+        num_of_segments: usize,
+    ) -> Self {
         Self {
             topic,
+            num_of_msg_per_file,
             last_flushed_offset,
             num_of_segments,
         }
@@ -99,7 +104,8 @@ impl TopicMetaData {
     pub fn new_with_few_defaults(topic: Topic) -> Self {
         Self {
             topic,
-            last_flushed_offset: 0,
+            num_of_msg_per_file: 32,
+            last_flushed_offset: None,
             num_of_segments: 64,
         }
     }
@@ -108,8 +114,18 @@ impl TopicMetaData {
         &self.topic
     }
 
-    pub fn last_flushed_offset(&self) -> &usize {
+    pub fn num_of_msg_per_file(&self) -> &usize {
+        &self.num_of_msg_per_file
+    }
+
+    pub fn last_flushed_offset(&self) -> &Option<usize> {
         &self.last_flushed_offset
+    }
+
+    /// this function should only be used by those who implement `stream_relay::topic::TopicWriter`
+    /// trait and marked unsafe because unintentional updates might lead to cascading failure
+    pub unsafe fn set_last_flushed_offset(&mut self, new_offset: Option<usize>) {
+        self.last_flushed_offset = new_offset;
     }
 
     pub fn num_of_segments(&self) -> &usize {
@@ -122,7 +138,7 @@ impl TryFrom<Topic> for TopicMetaData {
 
     /// [BLOCKING I/O Used] tries to read metadata about topic from disk
     /// and deserialize it into `Self`
-    /// 
+    ///
     /// # Error:
     /// if topic doesn't exist on disk OR invalid data in topic's metadata
     /// file to be deserialized.
