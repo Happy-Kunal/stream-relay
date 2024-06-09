@@ -51,6 +51,12 @@ impl Message {
     }
 }
 
+impl From<Bytes> for Message {
+    fn from(value: Bytes) -> Self {
+        Message::new(value, None)
+    }
+}
+
 impl Topic {
     pub fn new<T: AsRef<Path>>(name: String, root_path: T) -> Self {
         let path = root_path.as_ref().join(&name).into_boxed_path();
